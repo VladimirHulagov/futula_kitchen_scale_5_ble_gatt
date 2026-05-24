@@ -95,7 +95,10 @@ class TTSAction(BaseAction):
                 return
 
             if os.path.basename(player) == "mpg123":
-                play_cmd = [player, "-q", tmpfile]
+                play_cmd = [player, "-q"]
+                if self.device and self.device != "default":
+                    play_cmd += ["-a", self.device]
+                play_cmd.append(tmpfile)
             elif os.path.basename(player) == "ffplay":
                 play_cmd = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", tmpfile]
             else:

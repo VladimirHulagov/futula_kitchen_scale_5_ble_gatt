@@ -57,24 +57,27 @@ class TTSAction(BaseAction):
 
     async def on_weight(self, weight_g: int, stable: bool):
         if not stable or weight_g == 0:
-            # Weight is changing — reset stability counter
+            # Weight is changing or removed — reset stability counter
             self._consecutive_same = 0
             self._last_seen_weight = None
             return
 
-        # Track consecutive identical stable readings
-        if weight_g == self._last_seen_weight:
+        # Track consecutive readings within ±1g tolerance
+        if self._last_seen_weight is not None and abs(weight_g - self._last_seen_weight) <= 1:
             self._consecutive_same += 1
         else:
             self._consecutive_same = 1
-            self._last_seen_weight = weight_g
+        self._last_seen_weight = weight_g
 
-        # Wait until we've seen enough identical stable readings
+        # Wait until we've seen enough stable readings
         if self._consecutive_same < self.stable_count:
             return
 
-        # Don't re-announce same weight
-        if weight_g == self._last_announced_weight:
+        # Use the last seen weight (most recent)
+        announce_weight = weight_g
+
+        # Don't re-announce same weight (±1g tolerance)
+        if self._last_announced_weight is not None and abs(announce_weight - self._last_announced_weight) <= 1:
             return
 
         # Cooldown check
@@ -83,9 +86,9 @@ class TTSAction(BaseAction):
             return
 
         self._last_time = now
-        self._last_announced_weight = weight_g
+        self._last_announced_weight = announce_weight
 
-        text = self._format_weight(weight_g)
+        text = self._format_weight(announce_weight)
         print(f"[TTSAction] Speaking: {text}", flush=True)
 
         # Run _speak in a daemon thread to avoid blocking the BLE event loop

@@ -175,27 +175,17 @@ class FutulaDaemon:
         try:
             while self.running:
                 try:
-                    print(f"Scanning for scale ({self.scan_timeout}s)...", flush=True)
-                    devices = await BleakScanner.discover(
-                        timeout=self.scan_timeout, return_adv=True
+                    # Continuous scan — detect as fast as possible
+                    print(f"Scanning for scale...", flush=True)
+                    target = await BleakScanner.find_device_by_address(
+                        self.mac, timeout=30.0
                     )
 
-                    target = None
-                    for addr, (dev, adv) in devices.items():
-                        name = adv.local_name or ""
-                        if (
-                            "Kitchen" in name
-                            or "Scale" in name
-                            or addr.upper() == self.mac
-                        ):
-                            target = dev
-                            print(f"Found: {addr} '{name}' RSSI={adv.rssi}", flush=True)
-                            break
-
                     if target:
+                        print(f"Found: {self.mac} RSSI={target.rssi}", flush=True)
                         await self._connect_and_listen(target)
                     else:
-                        print("Scale not found", flush=True)
+                        print("Scale not found after 30s", flush=True)
 
                 except Exception as e:
                     print(f"Error: {e}", flush=True)

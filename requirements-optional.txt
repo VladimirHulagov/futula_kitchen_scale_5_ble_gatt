@@ -1,0 +1,5 @@
+# Optional: TTS action
+edge-tts>=6.1.0
+
+# Optional: MQTT action
+# paho-mqtt>=1.6.0

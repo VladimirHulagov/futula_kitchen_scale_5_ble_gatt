@@ -1,0 +1,14 @@
+[Unit]
+Description=FUTULA Kitchen Scale 5 BLE Daemon
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m futula_scale /etc/futula_scale/config.yaml
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/futula-scale
+
+[Install]
+WantedBy=multi-user.target

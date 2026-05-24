@@ -1,0 +1,51 @@
+# FUTULA Kitchen Scale 5 — BLE GATT configuration
+
+# Scale Bluetooth MAC address
+mac: "CF:E7:1E:16:04:1A"
+
+# BLE scan/connect tuning
+scan_timeout: 10      # seconds to scan for the scale
+connect_timeout: 15   # seconds for BLE connection attempt
+reconnect_delay: 5    # seconds between reconnection attempts
+
+# ---------------------------------------------------------------------------
+# Actions — each action reacts to weight readings from the scale.
+# Set `enabled: false` to disable. Add `class: module.path:ClassName` for
+# custom actions. Built-in actions: log, tts, mqtt, webhook.
+# ---------------------------------------------------------------------------
+actions:
+
+  # --- Log to JSONL file ---
+  log:
+    enabled: true
+    path: "/tmp/futula_log.jsonl"
+
+  # --- Text-to-Speech announcement ---
+  tts:
+    enabled: true
+    voice: "ru-RU-DmitryNeural"   # edge-tts voice
+    volume: "+50%"                 # edge-tts volume
+    device: "default"              # ALSA device for aplay
+    cooldown: 5                    # min seconds between announcements
+    announce_unit: "auto"          # "g", "kg", or "auto" (kg if >= 1000g)
+
+  # --- MQTT publish (requires paho-mqtt) ---
+  # mqtt:
+  #   enabled: false
+  #   host: "localhost"
+  #   port: 1883
+  #   topic: "futula_scale/weight"
+  #   username: ""
+  #   password: ""
+
+  # --- HTTP webhook ---
+  # webhook:
+  #   enabled: false
+  #   url: "http://homeassistant.local:8123/api/webhook/futula_scale"
+  #   cooldown: 2
+
+  # --- Custom action example ---
+  # my_action:
+  #   enabled: false
+  #   class: "my_package.my_module:MyAction"
+  #   custom_param: "value"

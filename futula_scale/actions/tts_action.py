@@ -39,13 +39,13 @@ class TTSAction(BaseAction):
         self.volume = config.get("volume", "+50%")
         self.device = config.get("device", "default")
         self.cooldown = config.get("cooldown", 5)
-        self.stable_count = config.get("stable_count", 3)
         self.announce_unit = config.get("announce_unit", "auto")
         self._last_announced_weight = None
         self._last_time = 0.0
         self._lock = threading.Lock()
-        self._consecutive_same = 0
-        self._last_seen_weight = None
+        self._last_stable_weight = None
+        self._timer = None
+        self._debounce = config.get("debounce", 1.5)
 
     def _format_weight(self, weight_g: int) -> str:
         if self.announce_unit == "kg" or (self.announce_unit == "auto" and weight_g >= 1000):
@@ -56,28 +56,31 @@ class TTSAction(BaseAction):
         return f"{weight_g} грамм"
 
     async def on_weight(self, weight_g: int, stable: bool):
-        if not stable or weight_g == 0:
-            # Weight is changing or removed — reset stability counter
-            self._consecutive_same = 0
-            self._last_seen_weight = None
+        if weight_g == 0:
+            # Scale is empty — reset
+            self._last_stable_weight = None
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
             return
 
-        # Track consecutive readings within ±1g tolerance
-        if self._last_seen_weight is not None and abs(weight_g - self._last_seen_weight) <= 1:
-            self._consecutive_same += 1
-        else:
-            self._consecutive_same = 1
-        self._last_seen_weight = weight_g
+        # Track the latest weight (stable flag is unreliable on this scale)
+        self._last_stable_weight = weight_g
 
-        # Wait until we've seen enough stable readings
-        if self._consecutive_same < self.stable_count:
+        # Cancel previous timer and start a new one
+        if self._timer:
+            self._timer.cancel()
+        self._timer = threading.Timer(self._debounce, self._announce_if_ready)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _announce_if_ready(self):
+        """Called after debounce period of stable readings."""
+        if self._last_stable_weight is None or self._last_stable_weight == 0:
             return
-
-        # Use the last seen weight (most recent)
-        announce_weight = weight_g
 
         # Don't re-announce same weight (±1g tolerance)
-        if self._last_announced_weight is not None and abs(announce_weight - self._last_announced_weight) <= 1:
+        if self._last_announced_weight is not None and abs(self._last_stable_weight - self._last_announced_weight) <= 1:
             return
 
         # Cooldown check
@@ -85,13 +88,13 @@ class TTSAction(BaseAction):
         if now - self._last_time < self.cooldown:
             return
 
+        weight_g = self._last_stable_weight
         self._last_time = now
-        self._last_announced_weight = announce_weight
+        self._last_announced_weight = weight_g
 
-        text = self._format_weight(announce_weight)
+        text = self._format_weight(weight_g)
         print(f"[TTSAction] Speaking: {text}", flush=True)
 
-        # Run _speak in a daemon thread to avoid blocking the BLE event loop
         t = threading.Thread(target=self._speak, args=(text,), daemon=True)
         t.start()
 

@@ -1,11 +1,24 @@
-"""TTS action — announces weight through speakers using edge-tts + aplay."""
+"""TTS action — announces weight through speakers using edge-tts + mpg123/aplay."""
 
 import asyncio
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 
 from . import BaseAction
+
+
+def _find_player() -> list[str] | None:
+    """Find the best available audio player command."""
+    for name in ["mpg123", "ffplay", "aplay"]:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
 
 
 class TTSAction(BaseAction):
@@ -28,7 +41,7 @@ class TTSAction(BaseAction):
         self.announce_unit = config.get("announce_unit", "auto")
         self._last_announced_weight = None
         self._last_time = 0.0
-        self._speaking = False
+        self._lock = threading.Lock()
 
     def _format_weight(self, weight_g: int) -> str:
         if self.announce_unit == "kg" or (self.announce_unit == "auto" and weight_g >= 1000):
@@ -42,7 +55,6 @@ class TTSAction(BaseAction):
         if not stable or weight_g == 0:
             return
 
-        import time
         now = time.time()
         if now - self._last_time < self.cooldown:
             return
@@ -53,37 +65,62 @@ class TTSAction(BaseAction):
         self._last_announced_weight = weight_g
 
         text = self._format_weight(weight_g)
+        print(f"[TTSAction] Speaking: {text}", flush=True)
 
-        # Run in thread to not block the BLE event loop
-        asyncio.get_event_loop().run_in_executor(None, self._speak, text)
+        # Run _speak in a daemon thread to avoid blocking the BLE event loop
+        t = threading.Thread(target=self._speak, args=(text,), daemon=True)
+        t.start()
 
     def _speak(self, text: str):
-        if self._speaking:
+        if not self._lock.acquire(blocking=False):
+            print("[TTSAction] Already speaking, skipping", flush=True)
             return
-        self._speaking = True
+        tmpfile = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                tmpfile = f.name
+            fd, tmpfile = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
 
             # Generate TTS audio
-            cmd = ["edge-tts", "--voice", self.voice, "--text", text, "--write-media", tmpfile]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+            cmd = ["edge-tts", "--voice", self.voice, "--text", text,
+                   "--write-media", tmpfile]
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+            if r.returncode != 0:
+                print(f"[TTSAction] edge-tts failed: {r.stderr.decode()[:200]}", flush=True)
+                return
 
-            # Play via aplay (pipe through ffmpeg or mpg123 if available)
-            if os.path.exists("/usr/bin/mpg123"):
-                play_cmd = ["mpg123", "-a", self.device, "-q", tmpfile]
-            elif os.path.exists("/usr/bin/ffplay"):
-                play_cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmpfile]
+            # Play audio
+            player = _find_player()
+            if not player:
+                print("[TTSAction] No audio player found (need mpg123/ffplay/aplay)", flush=True)
+                return
+
+            if os.path.basename(player) == "mpg123":
+                play_cmd = [player, "-q", tmpfile]
+            elif os.path.basename(player) == "ffplay":
+                play_cmd = [player, "-nodisp", "-autoexit", "-loglevel", "quiet", tmpfile]
             else:
-                # Try aplay (won't work with mp3, but worth trying if wav)
-                play_cmd = ["aplay", "-D", self.device, "-q", tmpfile]
+                # aplay can't play mp3 — convert with sox if available
+                sox = shutil.which("sox")
+                if sox:
+                    wav_file = tmpfile.replace(".mp3", ".wav")
+                    subprocess.run([sox, tmpfile, wav_file], capture_output=True, timeout=10)
+                    play_cmd = [player, "-q", wav_file]
+                else:
+                    play_cmd = [player, "-q", tmpfile]
 
-            subprocess.run(play_cmd, capture_output=True, timeout=15)
+            r = subprocess.run(play_cmd, capture_output=True, timeout=15)
+            if r.returncode != 0:
+                print(f"[TTSAction] Player failed: {r.stderr.decode()[:200]}", flush=True)
+
         except Exception as e:
             print(f"[TTSAction] Error: {e}", flush=True)
         finally:
-            self._speaking = False
-            try:
-                os.unlink(tmpfile)
-            except Exception:
-                pass
+            self._lock.release()
+            if tmpfile:
+                try:
+                    os.unlink(tmpfile)
+                    wav = tmpfile.replace(".mp3", ".wav")
+                    if os.path.exists(wav):
+                        os.unlink(wav)
+                except Exception:
+                    pass

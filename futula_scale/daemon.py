@@ -130,10 +130,15 @@ class FutulaDaemon:
         stable = parsed["stable"]
         flag = "STABLE" if stable else "..."
         print(f"[{flag}] {weight_g}g", flush=True)
-        # Dispatch in the event loop (handler is called from BLE thread)
-        asyncio.get_event_loop().call_soon_threadsafe(
-            lambda: asyncio.ensure_future(self._dispatch(weight_g, stable))
-        )
+        # Dispatch in the event loop (bleak calls this from a BLE thread)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(
+                lambda w=weight_g, s=stable: asyncio.ensure_future(self._dispatch(w, s))
+            )
 
     async def _connect_and_listen(self, device):
         async with BleakClient(device, timeout=self.connect_timeout) as client:

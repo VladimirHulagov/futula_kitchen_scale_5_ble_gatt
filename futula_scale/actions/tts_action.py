@@ -27,8 +27,9 @@ class TTSAction(BaseAction):
     Config keys:
         voice: edge-tts voice name (default: "ru-RU-DmitryNeural")
         volume: edge-tts volume string (default: "+50%")
-        device: ALSA audio device for aplay (default: "default")
+        device: ALSA audio device for mpg123/aplay (default: "default")
         cooldown: minimum seconds between announcements (default: 5)
+        stable_count: require N consecutive identical stable readings before speaking (default: 3)
         announce_unit: "g", "kg", or "auto" (default: "auto")
     """
 
@@ -38,10 +39,13 @@ class TTSAction(BaseAction):
         self.volume = config.get("volume", "+50%")
         self.device = config.get("device", "default")
         self.cooldown = config.get("cooldown", 5)
+        self.stable_count = config.get("stable_count", 3)
         self.announce_unit = config.get("announce_unit", "auto")
         self._last_announced_weight = None
         self._last_time = 0.0
         self._lock = threading.Lock()
+        self._consecutive_same = 0
+        self._last_seen_weight = None
 
     def _format_weight(self, weight_g: int) -> str:
         if self.announce_unit == "kg" or (self.announce_unit == "auto" and weight_g >= 1000):
@@ -53,12 +57,29 @@ class TTSAction(BaseAction):
 
     async def on_weight(self, weight_g: int, stable: bool):
         if not stable or weight_g == 0:
+            # Weight is changing — reset stability counter
+            self._consecutive_same = 0
+            self._last_seen_weight = None
             return
 
+        # Track consecutive identical stable readings
+        if weight_g == self._last_seen_weight:
+            self._consecutive_same += 1
+        else:
+            self._consecutive_same = 1
+            self._last_seen_weight = weight_g
+
+        # Wait until we've seen enough identical stable readings
+        if self._consecutive_same < self.stable_count:
+            return
+
+        # Don't re-announce same weight
+        if weight_g == self._last_announced_weight:
+            return
+
+        # Cooldown check
         now = time.time()
         if now - self._last_time < self.cooldown:
-            return
-        if weight_g == self._last_announced_weight:
             return
 
         self._last_time = now

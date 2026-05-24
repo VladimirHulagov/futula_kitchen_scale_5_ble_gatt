@@ -182,7 +182,7 @@ class FutulaDaemon:
                     )
 
                     if target:
-                        print(f"Found: {self.mac} RSSI={target.rssi}", flush=True)
+                        print(f"Found: {self.mac}", flush=True)
                         await self._connect_and_listen(target)
                     else:
                         print("Scale not found after 30s", flush=True)
